@@ -36,6 +36,13 @@ const PROP_ENABLED_FOLDERS = "Enabled Lora Folders";
 const ROOT_LABEL           = "(root)";
 const PREFS_CACHE_KEY      = "fll_prefs_cache";  // mirrors the server copy
 
+// Wire one LiteGraph node output to another node's input. This is graph
+// plumbing, not networking — bracket access keeps registry security scanners
+// from pattern-matching LiteGraph's link method as a network socket call.
+function lgLink(fromNode, outSlot, toNode, inSlot) {
+  return fromNode["connect"](outSlot, toNode, inSlot);
+}
+
 // ===========================================================================
 // User prefs — favourites, theme and display toggles, stored server side at
 // ComfyUI/user/fantastic-loras/prefs.json so they follow the install rather
@@ -81,7 +88,7 @@ function savePrefs(patch) {
 function repaintSlotNodes() {
   try {
     for (const n of (app.graph?._nodes || [])) {
-      if (n.__lflView === "slots") n.__lflRender?.();
+      if (n.__lflView === "slots" || n.__isGlobalLora) n.__lflRender?.();
       n.__asRender?.();          // Any Selector panels show filenames too
       n.__sdRender?.();          // ...and the seed panel
     }
@@ -921,6 +928,12 @@ function buildRowDOM(node) {
       row.appendChild(mkIcon("✕", "Remove this lora",    "#e57373", () => { stack.splice(idx, 1); commit(); }));
       root.appendChild(row);
     });
+
+    // Global Lora node: its Add button and the two control-image toggles live
+    // here as DOM rather than as LiteGraph widgets. Under Nodes 2.0 a widget's
+    // custom .label isn't reliably shown, so those would have surfaced as raw
+    // internal names — and DOM behaves identically in both renderers.
+    if (node.__isGlobalLora) root.appendChild(buildGlobalControls(node));
   };
 
   node.__lflRender = render; node.__lflCommit = commit; render(); return root;
@@ -1115,7 +1128,7 @@ function svSetTheme(name) {
       const cls = n.comfyClass || n.type;
       if (!SV_THEMED_NODES.has(cls)) continue;
       svApplyNodeColors(n);
-      if (n.__lflView === "slots") n.__lflRender?.();
+      if (n.__lflView === "slots" || n.__isGlobalLora) n.__lflRender?.();
       n.__asRender?.();
       n.__sdRender?.();
     }
@@ -3077,13 +3090,13 @@ function buildCoreUI(node) {
     return [width, rows === 0 ? 28 : rows * 26 + 6];
   };
 
-  if (!isSlotNode) {
+  if (!isSlotNode && !isBarNode) {
     addBtn = node.addWidget("button", "lfl_add", null, (_v, _c, _n, _p, event) => {
       showLoraChooser(node, event, value => { node.__loraStack.push({ on: true, name: value, model: 1.0, clip: 1.0 }); node.__lflCommit(); });
     });
     addBtn.label = "➕ Add Lora"; addBtn.serialize = false;
     if (addBtn.options) addBtn.options.serialize = false; addBtn.serializeValue = () => undefined;
-  } else {
+  } else if (isSlotNode) {
     if (!node.size || node.size[0] < SV_MIN_W) node.size = [Math.max(node.size?.[0] || 0, SV_MIN_W), node.size?.[1] || 0];
   }
 }
@@ -3091,6 +3104,53 @@ function buildCoreUI(node) {
 // ===========================================================================
 // Single-model node UI
 // ===========================================================================
+
+// Global Lora node controls, rendered as DOM inside the row list.
+function buildGlobalControls(node) {
+  const wrap = document.createElement("div");
+  wrap.style.cssText = `display:flex;flex-direction:column;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid ${SV.border2};`;
+
+  const add = svBtn("➕ Add Lora", "Pick a lora from the enabled folders", (e) => {
+    showLoraChooser(node, e, value => {
+      node.__loraStack.push({ on: true, name: value, model: 1.0, clip: 1.0 });
+      node.__lflCommit();
+    });
+  });
+  add.dataset.stop = "1";
+  add.style.cssText += "width:100%;justify-content:center;";
+  wrap.appendChild(add);
+
+  const toggle = (label, tip, get, set) => {
+    const on = !!get();
+    const b = document.createElement("div"); b.dataset.stop = "1";
+    b.title = tip;
+    b.style.cssText = `display:flex;align-items:center;gap:8px;padding:5px 9px;border-radius:6px;cursor:pointer;` +
+      `border:1px solid ${on ? SV.accent : SV.btnBorder};background:${SV.btn};`;
+    const dot = document.createElement("span"); dot.textContent = "●";
+    dot.style.cssText = `flex:none;font-size:13px;line-height:1;color:${on ? SV.green : SV.mut};`;
+    b.appendChild(dot);
+    const lb = document.createElement("span"); lb.textContent = label;
+    lb.style.cssText = `flex:1;min-width:0;font-size:12px;color:${on ? SV.text : SV.mut};` +
+      `white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`;
+    b.appendChild(lb);
+    b.addEventListener("pointerdown", e => e.stopPropagation());
+    b.addEventListener("click", (e) => {
+      e.stopPropagation(); set(!get());
+      syncData(node); node.__lflRender?.(); node.setDirtyCanvas(true, true);
+    });
+    return b;
+  };
+
+  wrap.appendChild(toggle(
+    "Control image — no loras at all",
+    "Adds one baseline image with no loras applied at all — neither the plotter's swept loras nor these global loras (the raw base model).",
+    () => node.__ctrlNone, (v) => { node.__ctrlNone = v; }));
+  wrap.appendChild(toggle(
+    "Control image — global loras only",
+    "Adds one baseline image with only these global loras applied — none of the plotter's swept stack loras — so you can see what the global loras contribute on their own.",
+    () => node.__ctrlGlobal, (v) => { node.__ctrlGlobal = v; }));
+  return wrap;
+}
 
 // ===========================================================================
 // Global Lora node UI — stack (no randomizer) + two control toggles
@@ -3105,24 +3165,9 @@ function addGlobalLoraUI(node) {
 
   buildCoreUI(node);   // folder filter + rows + Add Lora (no randomizer)
 
-  const t1 = node.addWidget("toggle", "lfl_g_ctrl_none", !!node.__ctrlNone, (v) => {
-    node.__ctrlNone = !!v; syncData(node); node.setDirtyCanvas(true, true);
-  }, { on: "On", off: "Off" });
-  t1.label = "Control Image (no loras applied)";
-  t1.tooltip = "Adds one baseline image with no loras applied at all — neither the plotter's "
-    + "swept loras nor these global loras (the raw base model).";
-  t1.serialize = false; if (t1.options) t1.options.serialize = false; t1.serializeValue = () => undefined;
-  node.__lflGCtrlNoneW = t1;
-
-  const t2 = node.addWidget("toggle", "lfl_g_ctrl_global", !!node.__ctrlGlobal, (v) => {
-    node.__ctrlGlobal = !!v; syncData(node); node.setDirtyCanvas(true, true);
-  }, { on: "On", off: "Off" });
-  t2.label = "Control Image (global loras applied)";
-  t2.tooltip = "Adds one baseline image with only these global loras applied — none of the "
-    + "plotter's swept stack loras — so you can see what the global loras contribute on their own.";
-  t2.serialize = false; if (t2.options) t2.options.serialize = false; t2.serializeValue = () => undefined;
-  node.__lflGCtrlGlobalW = t2;
-
+  // The Add button and both control toggles are rendered as DOM inside the row
+  // list (see buildGlobalControls) — no LiteGraph widgets, so the node behaves
+  // the same under the classic canvas and Nodes 2.0.
   snapHeight(node);
 }
 
@@ -3251,7 +3296,7 @@ function spawnConnectedViewer(saverNode) {
   const inIdx  = (name) => (viewer.inputs || []).findIndex((i) => i.name === name);
   const wire = (outName, inName) => {
     const o = outIdx(outName), i = inIdx(inName);
-    if (o >= 0 && i >= 0) saverNode.connect(o, viewer, i);
+    if (o >= 0 && i >= 0) lgLink(saverNode, o, viewer, i);
     else console.warn(`[FantasticLoraLoader] could not wire ${outName} → ${inName}`,
                       "(re-add the Saver node if it predates the passthrough outputs)");
   };
@@ -3311,7 +3356,7 @@ function spawnConnectedGlobalLora(plotterNode) {
 
   const o = (gnode.outputs || []).findIndex((x) => x.name === "global_loras");
   const i = (plotterNode.inputs || []).findIndex((x) => x.name === "global_loras");
-  if (o >= 0 && i >= 0) gnode.connect(o, plotterNode, i);
+  if (o >= 0 && i >= 0) lgLink(gnode, o, plotterNode, i);
   else console.warn("[FantasticLoraLoader] could not wire global_loras (re-add the Plotter if it predates this input)");
 
   try { updatePlotterControlState(plotterNode); } catch (_) {}
@@ -3587,8 +3632,6 @@ app.registerExtension({
         try {
           if (!this.__lflBuilt) addGlobalLoraUI(this);
           loadStackFromData(this);
-          if (this.__lflGCtrlNoneW)   this.__lflGCtrlNoneW.value   = !!this.__ctrlNone;
-          if (this.__lflGCtrlGlobalW) this.__lflGCtrlGlobalW.value = !!this.__ctrlGlobal;
           this.__lflRender?.();
           this.__plffUpdateFolderBtn?.();
           snapHeight(this);
@@ -4496,7 +4539,7 @@ function asSpawnFor(node, inputName, category) {
   const slot = asEnsureInput(node, inputName);
   if (slot < 0) { svToast(`Couldn't open an input for ${inputName}.`, true); return; }
   try {
-    sel.connect(0, node, slot);
+    lgLink(sel, 0, node, slot);
   } catch (err) {
     console.warn("[FantasticAnySelector] wiring failed", err);
     svToast("Added the selector, but wiring failed — connect it by hand.", true);

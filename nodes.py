@@ -33,6 +33,7 @@ import math
 import random
 import time
 import shutil
+import urllib.parse
 
 import folder_paths
 import comfy.utils
@@ -1481,8 +1482,7 @@ def _resolve_ref_path(ref):
         if not fn:
             return None
         path = os.path.normpath(os.path.join(base, sub, fn))
-        base_real = os.path.realpath(base)
-        if not os.path.realpath(path).startswith(base_real):
+        if not _contained_in(path, base):
             return None
         return path if os.path.isfile(path) else None
     except Exception:
@@ -1545,6 +1545,8 @@ def _delete_run(rid):
     if not _safe_run_id(rid):
         return False
     d = _run_dir(rid)
+    if not _contained_in(d, _grid_archive_root()):
+        return False
     try:
         if os.path.isdir(d):
             shutil.rmtree(d)
@@ -1714,7 +1716,10 @@ def _preset_safe_name(name):
     if not name or name in (".", ".."):
         return "", None
     name = name[:80]
-    return name, os.path.join(_preset_dir(), name + ".json")
+    path = os.path.join(_preset_dir(), name + ".json")
+    if not _contained_in(path, _preset_dir()):
+        return "", None
+    return name, path
 
 
 def _list_presets():
@@ -2098,7 +2103,10 @@ def _sel_preset_path(category, name):
     name = re.sub(r'[<>:"|?*\x00-\x1f]', "", name).strip(" .")[:80]
     if not name or name in (".", ".."):
         return "", None
-    return name, os.path.join(d, name + ".json")
+    path = os.path.join(d, name + ".json")
+    if not _contained_in(path, d):
+        return "", None
+    return name, path
 
 
 def _list_sel_presets(category):
@@ -2243,6 +2251,71 @@ NODE_DISPLAY_NAME_MAPPINGS = {
 
 
 # ---------------------------------------------------------------------------
+# Route security — CSRF / same-origin enforcement and path containment.
+#
+# Every route below that can create, modify or delete a file is wrapped in
+# _mutation_guard, which rejects the request unless:
+#   1. it carries an Origin (or Referer) header whose host matches the Host
+#      header — a hostile web page open in the same browser cannot forge a
+#      cross-origin request against these endpoints (403), and
+#   2. for POST, the body is declared Content-Type: application/json — which
+#      forces a CORS preflight on any cross-origin attempt, so simple-request
+#      CSRF (e.g. a <form> post) is impossible (415).
+# ComfyUI core applies its own Origin middleware app-wide (server.py,
+# create_origin_only_middleware), but only when both headers are present and
+# the host is loopback; the checks here hold unconditionally.
+#
+# Filesystem writes are additionally confined: _contained_in() asserts the
+# resolved real path stays inside its intended root before anything is
+# written, renamed or deleted. GET routes are read-only and unguarded.
+# ---------------------------------------------------------------------------
+
+def _contained_in(path, root):
+    """True when the resolved path is the root or inside it."""
+    try:
+        rp = os.path.realpath(path)
+        rr = os.path.realpath(root)
+        return rp == rr or rp.startswith(rr + os.sep)
+    except Exception:
+        return False
+
+
+def _same_origin_ok(request):
+    """True when the request's Origin (or Referer) host matches its Host."""
+    host = (request.headers.get("Host") or "").strip().lower()
+    ref = (request.headers.get("Origin") or request.headers.get("Referer") or "").strip()
+    if not host or not ref:
+        return False
+    netloc = urllib.parse.urlparse(ref).netloc.strip().lower()
+    if not netloc:
+        return False
+    if netloc == host:
+        return True
+    # Tolerate a default-port mismatch (one side carries :port, the other not).
+    h_host, _, h_port = host.partition(":")
+    o_host, _, o_port = netloc.partition(":")
+    return h_host == o_host and (not h_port or not o_port)
+
+
+def _mutation_guard(handler):
+    """Wrap a mutating route handler with same-origin and content-type checks."""
+    async def _guarded(request):
+        from aiohttp import web as _web
+        if not _same_origin_ok(request):
+            return _web.json_response(
+                {"error": "cross-origin request refused",
+                 "detail": "mutating /fantastic_loras endpoints require a "
+                           "same-origin Origin or Referer header (CSRF protection)"},
+                status=403)
+        if request.method == "POST" and request.content_type != "application/json":
+            return _web.json_response(
+                {"error": "expected Content-Type: application/json"}, status=415)
+        return await handler(request)
+    _guarded.__name__ = handler.__name__
+    return _guarded
+
+
+# ---------------------------------------------------------------------------
 # API route: lora filename list
 # ---------------------------------------------------------------------------
 
@@ -2271,6 +2344,7 @@ def _register_routes():
         return _web.json_response({"defaults": _read_archive_defaults()})
 
     @PromptServer.instance.routes.post("/fantastic_loras/archive_defaults")
+    @_mutation_guard
     async def _set_archive_defaults(request):
         from aiohttp import web as _web
         try:
@@ -2303,6 +2377,7 @@ def _register_routes():
         return _web.json_response({"category": cat, "presets": _list_sel_presets(cat)})
 
     @PromptServer.instance.routes.post("/fantastic_loras/sel_presets/save")
+    @_mutation_guard
     async def _sel_presets_save(request):
         from aiohttp import web as _web
         try:
@@ -2333,6 +2408,7 @@ def _register_routes():
         return _web.json_response({"name": name, "presets": _list_sel_presets(cat)})
 
     @PromptServer.instance.routes.post("/fantastic_loras/sel_presets/delete")
+    @_mutation_guard
     async def _sel_presets_delete(request):
         from aiohttp import web as _web
         try:
@@ -2356,6 +2432,7 @@ def _register_routes():
         return _web.json_response({"prefs": _read_prefs()})
 
     @PromptServer.instance.routes.post("/fantastic_loras/prefs")
+    @_mutation_guard
     async def _prefs_set(request):
         from aiohttp import web as _web
         try:
@@ -2373,6 +2450,7 @@ def _register_routes():
         return _web.json_response({"presets": _list_presets()})
 
     @PromptServer.instance.routes.post("/fantastic_loras/presets/save")
+    @_mutation_guard
     async def _presets_save(request):
         from aiohttp import web as _web
         try:
@@ -2407,6 +2485,7 @@ def _register_routes():
                                    "presets": _list_presets()})
 
     @PromptServer.instance.routes.post("/fantastic_loras/presets/load")
+    @_mutation_guard
     async def _presets_load(request):
         from aiohttp import web as _web
         try:
@@ -2443,6 +2522,7 @@ def _register_routes():
         })
 
     @PromptServer.instance.routes.post("/fantastic_loras/presets/update")
+    @_mutation_guard
     async def _presets_update(request):
         """Rename a preset and/or change its category, leaving its loras alone."""
         from aiohttp import web as _web
@@ -2483,6 +2563,7 @@ def _register_routes():
         return _web.json_response({"name": new_name, "presets": _list_presets()})
 
     @PromptServer.instance.routes.post("/fantastic_loras/presets/duplicate")
+    @_mutation_guard
     async def _presets_duplicate(request):
         """Copy a preset under a new name. Copies the stored file verbatim, so
         the duplicate is exact — no pruning of loras missing from disk."""
@@ -2520,6 +2601,7 @@ def _register_routes():
         return _web.json_response({"name": new_name, "presets": _list_presets()})
 
     @PromptServer.instance.routes.post("/fantastic_loras/presets/delete")
+    @_mutation_guard
     async def _presets_delete(request):
         from aiohttp import web as _web
         try:
@@ -2554,6 +2636,7 @@ def _register_routes():
         })
 
     @PromptServer.instance.routes.post("/fantastic_loras/run/{rid}/favorites")
+    @_mutation_guard
     async def _favorites(request):
         from aiohttp import web as _web
         rid = request.match_info.get("rid", "")
@@ -2569,6 +2652,7 @@ def _register_routes():
         return _web.json_response({"ok": ok, "favorites": man["favorites"]})
 
     @PromptServer.instance.routes.post("/fantastic_loras/run/{rid}/pin")
+    @_mutation_guard
     async def _pin(request):
         from aiohttp import web as _web
         rid = request.match_info.get("rid", "")
@@ -2584,6 +2668,7 @@ def _register_routes():
         return _web.json_response({"ok": ok, "pinned": man["pinned"]})
 
     @PromptServer.instance.routes.post("/fantastic_loras/save_grid")
+    @_mutation_guard
     async def _save_grid(request):
         from aiohttp import web as _web
         try:
@@ -2612,6 +2697,7 @@ def _register_routes():
         })
 
     @PromptServer.instance.routes.post("/fantastic_loras/run/{rid}/comparison")
+    @_mutation_guard
     async def _comparison(request):
         from aiohttp import web as _web
         rid = request.match_info.get("rid", "")
@@ -2636,6 +2722,7 @@ def _register_routes():
         return _web.json_response({"ok": ok, "comparisons": comps})
 
     @PromptServer.instance.routes.delete("/fantastic_loras/run/{rid}")
+    @_mutation_guard
     async def _delete(request):
         from aiohttp import web as _web
         rid = request.match_info.get("rid", "")
