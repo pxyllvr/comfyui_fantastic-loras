@@ -1,7 +1,7 @@
 // Fantastic Lora Loader — frontend UI
 // ------------------------------------
 // Handles the loader and plotter nodes:
-//   FantasticLoraLoaderMulti     — lora stack + dynamic extra MODEL paths
+//   FantasticLoraLoaderSlots     — slot-grid lora stack + dynamic extra MODEL paths
 //   FantasticLoraPlotter         — same UI, sweep stage
 //
 // The loader starts with zero extra model paths (looks like a plain single-
@@ -18,7 +18,8 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
-const MULTI_NODE_NAME = "FantasticLoraLoaderMulti";
+const MULTI_NODE_NAME = "FantasticLoraLoaderSlots";
+const CLASSIC_LOADER_NAMES = new Set(["FantasticLoraLoader", "FantasticLoraLoaderMulti"]);
 const PLOT_NODE_NAME  = "FantasticLoraPlotter";
 const SAVER_NODE_NAME = "FantasticPlotterImageSaver";
 const GLOBAL_NODE_NAME = "FantasticPlotterGlobalLora";
@@ -3567,6 +3568,8 @@ app.registerExtension({
       try {
         const nodes = app.graph?._nodes || [];
         for (const node of nodes) {
+          const cls = node.comfyClass || node.type;
+          if (CLASSIC_LOADER_NAMES.has(cls)) continue;
           if (!node.__loraStack) continue;
           let changed = false;
           for (const entry of node.__loraStack) {

@@ -77,7 +77,7 @@ Two ready-made workflows are in the `example_workflows` folder — drag either o
 
 ## Quick start
 
-1. Add **Fantastic Lora Loader 📁** (double-click the canvas, search "fantastic").
+1. Add **Fantastic Lora Loader (Slots) 📁** (double-click the canvas, search "fantastic"). For pre-2.0 compact list UI, add **Fantastic Lora Loader (Classic)** or **Classic Multi** instead.
 2. Wire your **MODEL** into it and its output onward to your sampler. Wire **CLIP** too if your setup uses text-encoder LoRA weights — for models where LoRAs only touch the diffusion model, you can leave it unconnected.
 3. Click **Add lora…** and pick one. It lands in the first empty slot.
 4. Adjust its strength with **− +** or by scrolling over the number.
@@ -91,7 +91,9 @@ That's the whole basic loop. Everything below is optional.
 
 | Node | What it's for |
 |---|---|
-| **Fantastic Lora Loader 📁** | The main one. Stack LoRAs onto one or several models. |
+| **Fantastic Lora Loader (Slots) 📁** | The v2 slot-grid loader. Stack LoRAs onto one or several models, with per-chain CLIP outputs. |
+| **Fantastic Lora Loader (Classic) 📁** | Pre-2.0 compact list (single model). Click ✕ to remove a LoRA. Same class name as v1, so old workflows load as-is. |
+| **Fantastic Lora Loader (Classic Multi) 📁** | Pre-2.0 compact list with extra MODEL outputs. Same class name and output layout as v1 Multi. |
 | **Fantastic Lora Plotter 📊** | XY test bench — sweep LoRAs against strengths and get a comparison grid. |
 | **Fantastic Plotter Global Lora 🌐** | LoRAs applied to *every* image in a comparison. |
 | **Fantastic Plotter Image Saver 📊** | Turns the comparison into one labelled grid image. |
@@ -467,11 +469,23 @@ The first three follow your ComfyUI install, so they're the same in every workfl
 - The Plotter's Grid Viewer now labels its hidden rows and hidden columns separately, below the grid.
 - Panels of overlapping pack nodes stack correctly when clicked.
 
+## Classic loaders (pre-2.0 UI)
+
+v2.0 replaced the compact list UI with a 12-slot grid and dropped the `FantasticLoraLoader` class name. That broke workflows saved against commit `d891ad1` / v1.x — especially graphs embedded in video files — because ComfyUI could no longer find the old node type, and the Multi node's extra outputs changed from MODEL-only to MODEL+CLIP pairs.
+
+This fork keeps **both** generations:
+
+| Workflow type key | UI | What it preserves |
+|---|---|---|
+| `FantasticLoraLoader` | compact list, ✕ to remove | v1 single-model graphs |
+| `FantasticLoraLoaderMulti` | compact list, ✕ to remove, extra MODEL 2–5 | v1 multi-model graphs and their link indices |
+| `FantasticLoraLoaderSlots` | v2 slot grid, presets, per-chain CLIP | new workflows |
+
+If you already rebuilt a graph on upstream 2.x, its loader type is `FantasticLoraLoaderMulti` but it expects slot outputs (`CLIP 2`…`CLIP 5`). Those graphs need the loader swapped to **Fantastic Lora Loader (Slots)** once. Anything saved before `ea6599b` (v2.0.0, 14 Aug 2026) should open without remapping.
+
 ## Upgrading from v1
 
-The old single-model **Fantastic Lora Loader** node has been replaced by the multi-model one (which is now just called **Fantastic Lora Loader 📁**). Old workflows using the single-model node will need it swapped for the new one — your LoRA list, strengths, and folder filter all carry over.
-
-Favourites and theme choice from v1 lived in your browser and don't migrate to the new on-disk settings; you'll want to re-star your regulars once.
+Favourites and theme choice from v1 lived in your browser and don't migrate to the new on-disk settings; you'll want to re-star your regulars once. The compact list nodes above are the compatibility path — you do not have to rebuild old graphs onto the slot loader.
 
 ## Under the hood
 

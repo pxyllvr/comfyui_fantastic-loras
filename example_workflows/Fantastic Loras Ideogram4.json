@@ -437,7 +437,7 @@
     },
     {
       "id": 180,
-      "type": "FantasticLoraLoaderMulti",
+      "type": "FantasticLoraLoaderSlots",
       "pos": [
         5740,
         6.246082153875797
@@ -503,7 +503,7 @@
           "widget_ue_connectable": {},
           "input_ue_unconnectable": {}
         },
-        "Node name for S&R": "FantasticLoraLoaderMulti",
+        "Node name for S&R": "FantasticLoraLoaderSlots",
         "extra_model_count": 1
       },
       "widgets_values": [

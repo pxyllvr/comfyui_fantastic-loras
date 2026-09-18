@@ -518,7 +518,73 @@ _LORA_DATA_INPUT = (
 # a patched MODEL + CLIP per chain. With no extra chains the node behaves like a
 # plain single-model loader — three outputs, extra slots hidden.
 
+class FantasticLoraLoader:
+    """Pre-2.0 compact list loader (single model). Kept so workflows saved
+    against d891ad1 / v1.x still deserialize without a missing-node remap.
+    """
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {"model": ("MODEL",), "lora_data": _LORA_DATA_INPUT},
+            "optional": {"clip": ("CLIP",)},
+        }
+
+    RETURN_TYPES = ("MODEL", "CLIP", "LORA_STACK")
+    RETURN_NAMES = ("MODEL", "CLIP", "lora_stack")
+    FUNCTION = "load"
+    CATEGORY = "loaders"
+    TITLE = "Fantastic Lora Loader (Classic)"
+
+    @classmethod
+    def IS_CHANGED(cls, model=None, lora_data="{}", clip=None, **kwargs):
+        return lora_data
+
+    def load(self, model, lora_data, clip=None):
+        model, clip = _apply_stack(model, clip, lora_data)
+        return (model, clip, _stack_list_from_data(lora_data))
+
+
 class FantasticLoraLoaderMulti:
+    """Pre-2.0 compact list loader (multi-model). Same class name, inputs,
+    and MODEL-only extra outputs as v1.x so embedded video workflows keep
+    their links. Per-chain CLIP outputs live on FantasticLoraLoaderSlots.
+    """
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {"model": ("MODEL",), "lora_data": _LORA_DATA_INPUT},
+            "optional": {
+                "clip":    ("CLIP",),
+                "model_2": ("MODEL",),
+                "model_3": ("MODEL",),
+                "model_4": ("MODEL",),
+                "model_5": ("MODEL",),
+            },
+        }
+
+    RETURN_TYPES = ("MODEL", "CLIP", "LORA_STACK", "MODEL", "MODEL", "MODEL", "MODEL")
+    RETURN_NAMES = ("MODEL", "CLIP", "lora_stack", "MODEL 2", "MODEL 3", "MODEL 4", "MODEL 5")
+    FUNCTION = "load"
+    CATEGORY = "loaders"
+    TITLE = "Fantastic Lora Loader (Classic Multi)"
+
+    @classmethod
+    def IS_CHANGED(cls, model=None, lora_data="{}", clip=None, **kwargs):
+        return lora_data
+
+    def load(self, model, lora_data, clip=None,
+             model_2=None, model_3=None, model_4=None, model_5=None):
+        primary_m, patched_clip = _apply_stack(model, clip, lora_data)
+        extras = []
+        for m in (model_2, model_3, model_4, model_5):
+            extras.append(_apply_stack(m, None, lora_data)[0] if m is not None else None)
+        return (primary_m, patched_clip, _stack_list_from_data(lora_data), *extras)
+
+
+class FantasticLoraLoaderSlots:
+    """v2+ slot-grid loader. New class name so it can live next to the
+    classic Multi node without stealing its workflow type key.
+    """
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -540,7 +606,7 @@ class FantasticLoraLoaderMulti:
                     "MODEL 4", "CLIP 4", "MODEL 5", "CLIP 5")
     FUNCTION = "load"
     CATEGORY = "loaders"
-    TITLE = "Fantastic Lora Loader"
+    TITLE = "Fantastic Lora Loader (Slots)"
 
     @classmethod
     def IS_CHANGED(cls, model=None, lora_data="{}", clip=None, **kwargs):
@@ -2227,7 +2293,9 @@ class FantasticSeeds:
 
 
 NODE_CLASS_MAPPINGS = {
+    "FantasticLoraLoader":      FantasticLoraLoader,
     "FantasticLoraLoaderMulti": FantasticLoraLoaderMulti,
+    "FantasticLoraLoaderSlots": FantasticLoraLoaderSlots,
     "FantasticLoraPlotter":     FantasticLoraPlotter,
     "FantasticPlotterGlobalLora": FantasticPlotterGlobalLora,
     "FantasticPlotterImageSaver": FantasticPlotterImageSaver,
@@ -2238,7 +2306,9 @@ NODE_CLASS_MAPPINGS = {
     "FantasticSeeds":           FantasticSeeds,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "FantasticLoraLoaderMulti": "Fantastic Lora Loader 📁",
+    "FantasticLoraLoader":      "Fantastic Lora Loader (Classic) 📁",
+    "FantasticLoraLoaderMulti": "Fantastic Lora Loader (Classic Multi) 📁",
+    "FantasticLoraLoaderSlots": "Fantastic Lora Loader (Slots) 📁",
     "FantasticLoraPlotter":     "Fantastic Lora Plotter 📊",
     "FantasticPlotterGlobalLora": "Fantastic Plotter Global Lora 🌐",
     "FantasticPlotterImageSaver": "Fantastic Plotter Image Saver 📊",
