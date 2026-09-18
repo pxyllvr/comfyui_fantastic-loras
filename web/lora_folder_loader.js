@@ -26,7 +26,7 @@ const GLOBAL_NODE_NAME = "FantasticPlotterGlobalLora";
 const VIEWER_NODE_NAME = "FantasticPlotterGridViewer";
 const ALL_NODE_NAMES  = [MULTI_NODE_NAME, PLOT_NODE_NAME];
 // Every node in the pack that the theme picker recolours.
-const SV_THEMED_NODES = new Set([MULTI_NODE_NAME, PLOT_NODE_NAME, SAVER_NODE_NAME, GLOBAL_NODE_NAME, VIEWER_NODE_NAME, "FantasticAnySelector", "FantasticSeeds"]);
+const SV_THEMED_NODES = new Set([MULTI_NODE_NAME, PLOT_NODE_NAME, SAVER_NODE_NAME, GLOBAL_NODE_NAME, VIEWER_NODE_NAME, "FantasticAnySelector", "FantasticSeeds", "FantasticLoraLoader", "FantasticLoraLoaderMulti"]);
 
 const DATA_WIDGET          = "lora_data";
 const NODE_COLOR           = "#0f848a";
@@ -68,7 +68,7 @@ async function loadPrefs() {
   try {
     const r = await api.fetchApi("/fantastic_loras/prefs");
     const d = await r.json();
-    if (d && d.prefs) { FLL_PREFS = Object.assign({}, PREFS_DEFAULT, d.prefs); cachePrefs(); repaintSlotNodes(); }
+    if (d && d.prefs) { FLL_PREFS = Object.assign({}, PREFS_DEFAULT, d.prefs); cachePrefs(); repaintSlotNodes(); } // classic loaders also listen via CLASSIC_LOADER_NAMES
   } catch (_) {}
   return FLL_PREFS;
 }
@@ -89,7 +89,7 @@ function savePrefs(patch) {
 function repaintSlotNodes() {
   try {
     for (const n of (app.graph?._nodes || [])) {
-      if (n.__lflView === "slots" || n.__isGlobalLora) n.__lflRender?.();
+      if (n.__lflView === "slots" || n.__isGlobalLora || CLASSIC_LOADER_NAMES.has(n.comfyClass || n.type)) n.__lflRender?.();
       n.__asRender?.();          // Any Selector panels show filenames too
       n.__sdRender?.();          // ...and the seed panel
     }
@@ -1058,7 +1058,7 @@ const SV_THEMES = {
     text: "#dde2ea", dim: "#a9b2c2", mut: "#6b7484", faint: "#5c6472", ghost: "#4d5563",
   },
   node: {
-    label: "Like, TEAL Teal", swatch: "#0a6166", nodeColor: "#0f848a", nodeBg: "#0a6166",
+    label: "Classic Teal", swatch: "#0a6166", nodeColor: "#0f848a", nodeBg: "#0a6166",
     panel: "#0a6166", inset: "#085256", slotEmpty: "#0a595e",
     border: "#0e7d84", border2: "#0c757b", dashed: "#107f86",
     btn: "#0c757b", btnBorder: "#12939b", btnHover: "#0e858c", btnText: "#f0fbfc",
@@ -1129,7 +1129,7 @@ function svSetTheme(name) {
       const cls = n.comfyClass || n.type;
       if (!SV_THEMED_NODES.has(cls)) continue;
       svApplyNodeColors(n);
-      if (n.__lflView === "slots" || n.__isGlobalLora) n.__lflRender?.();
+      if (n.__lflView === "slots" || n.__isGlobalLora || CLASSIC_LOADER_NAMES.has(n.comfyClass || n.type)) n.__lflRender?.();
       n.__asRender?.();
       n.__sdRender?.();
     }
@@ -1817,7 +1817,8 @@ function svToast(msg, bad) {
 }
 
 function svApplyPreset(node, data) {
-  const stack = (data.loras || []).slice(0, SLOT_MAX).map(e => ({
+  const cap = node.__classicPresets ? 999 : SLOT_MAX;
+  const stack = (data.loras || []).slice(0, cap).map(e => ({
     on: e.on !== false, name: e.name || "", model: Number(e.model ?? 1), clip: Number(e.clip ?? e.model ?? 1),
     ...(e.targets ? { targets: e.targets } : {}),
     ...(e.random ? { random: true, locked: !!e.locked, autoRoll: !!e.autoRoll, folders: e.folders ?? null } : {}),
@@ -1827,7 +1828,9 @@ function svApplyPreset(node, data) {
     setEnabledFolders(node, data.enabledFolders == null ? null : new Set(data.enabledFolders.map(normPath)));
   }
   // Load applies everything the preset stored, including chain count.
-  if (typeof data.chains === "number") {
+  // Classic list nodes keep their existing sockets so a Load cannot
+  // rewrite an old workflow's input/output layout.
+  if (typeof data.chains === "number" && !node.__classicPresets) {
     const want = Math.max(1, Math.min(1 + MAX_EXTRA_MODELS, Math.round(data.chains)));
     let guard = 0;
     while (flgChainCount(node) < want && guard++ < 8) addModelPair(node);
@@ -2604,7 +2607,7 @@ function svMergeIntoStack(node, loras) {
 
   for (const src of (loras || [])) {
     if (!src || typeof src !== "object") continue;
-    if (stack.length >= SLOT_MAX) { dropped++; continue; }
+    if (stack.length >= (node.__classicPresets ? 999 : SLOT_MAX)) { dropped++; continue; }
     if (!src.random && src.name && have.has(src.name)) { dupes++; continue; }
 
     const strength = Number(src.model ?? 1);
@@ -5008,3 +5011,12 @@ app.registerExtension({
     };
   },
 });
+
+export {
+  svFileLabel,
+  svExtButton,
+  svThemeButton,
+  svApplyNodeColors,
+  svPresetRow,
+  svShowExt,
+};

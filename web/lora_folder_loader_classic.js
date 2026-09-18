@@ -15,6 +15,7 @@
 
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
+import { svFileLabel, svExtButton, svThemeButton, svApplyNodeColors, svPresetRow } from "./lora_folder_loader.js";
 
 const NODE_NAME       = "FantasticLoraLoader";
 const MULTI_NODE_NAME = "FantasticLoraLoaderMulti";
@@ -407,7 +408,7 @@ async function showLoraChooser(node, event, onChoose) {
       const dirSpan = document.createElement("span"); dirSpan.className = "lfl-item-dir";
       dirSpan.textContent = dir + "/"; nameEl.appendChild(dirSpan);
     }
-    const fileSpan = document.createElement("span"); fileSpan.textContent = baseName(path);
+    const fileSpan = document.createElement("span"); fileSpan.textContent = svFileLabel(path);
     nameEl.appendChild(fileSpan);
     nameEl.title = path;
     item.appendChild(nameEl);
@@ -713,6 +714,15 @@ function buildRowDOM(node) {
 
   const render = () => {
     root.textContent = "";
+    const tools = document.createElement("div");
+    tools.style.cssText = "display:flex;flex-direction:column;gap:6px;margin-bottom:6px;";
+    const top = document.createElement("div");
+    top.style.cssText = "display:flex;align-items:center;gap:6px;";
+    top.appendChild(svExtButton());
+    top.appendChild(svThemeButton());
+    tools.appendChild(top);
+    tools.appendChild(svPresetRow(node));
+    root.appendChild(tools);
     const stack = node.__loraStack || [], hasClip = clipConnected(node);
     const globalMode = node.__isPlotter && node.__plotMode === "global";
     if (!stack.length) {
@@ -804,7 +814,7 @@ function buildRowDOM(node) {
         if (dir !== ROOT_LABEL) {
           const d = document.createElement("span"); d.style.cssText = "opacity:.45;font-size:11px;"; d.textContent = dir + "/"; nameEl.appendChild(d);
         }
-        const fn = document.createElement("span"); fn.style.cssText = "font-size:14px;font-weight:bold;"; fn.textContent = baseName(entry.name); nameEl.appendChild(fn);
+        const fn = document.createElement("span"); fn.style.cssText = "font-size:14px;font-weight:bold;"; fn.textContent = svFileLabel(entry.name); nameEl.appendChild(fn);
       }
       nameEl.addEventListener("click", e => showLoraChooser(node, e, value => { entry.name = value; commit(); }));
       nameEl.addEventListener("pointerdown", e => e.stopPropagation()); row.appendChild(nameEl);
@@ -862,7 +872,7 @@ function buildCoreUI(node) {
   domWidget.serializeValue = () => undefined;
   domWidget.computeSize = function (width) {
     const rows = node.__loraStack?.length || 0;
-    return [width, rows === 0 ? 28 : rows * 26 + 6];
+    return [width, (rows === 0 ? 28 : rows * 26 + 6) + 72];
   };
 
   const addBtn = node.addWidget("button", "lfl_add", null, (_v, _c, _n, _p, event) => {
@@ -879,6 +889,8 @@ function buildCoreUI(node) {
 function addUI(node) {
   if (node.__lflBuilt) return;
   node.__lflBuilt = true;
+  node.__classicPresets = true;
+  try { svApplyNodeColors(node); } catch (_) {}
   buildCoreUI(node);
 
   // 🎲 Add Lora Randomizer — single-model node only (for now)
@@ -1192,6 +1204,8 @@ function _setupSaverUI(node) {
 function addMultiUI(node, { autoAddPair = true, isPlotter = false } = {}) {
   if (node.__lflBuilt) return;
   node.__lflBuilt = true;
+  node.__classicPresets = true;
+  try { svApplyNodeColors(node); } catch (_) {}
   node.properties = node.properties || {};
   if (isPlotter) {
     node.__isPlotter = true;
